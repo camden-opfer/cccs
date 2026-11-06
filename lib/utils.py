@@ -146,7 +146,7 @@ def log(message:str|Exception, logLevel:int|str=_INFO, loggerName:str=__name__):
 
     logger.log(level=logLevel, msg=message)
 
-def timedInput(prompt, default='y', timeout=30, checkInterval=0.05):
+def timedInput(prompt:str, default:str='y', timeout:int|float=30, checkInterval:int|float=0.05):
     """
     A function that allows the user to provide input, but assumes a default value after 'timeout' seconds if no input is provided. Helpful when running code overnight, when API requests and such should be automatically retried.
 
@@ -212,3 +212,63 @@ def timedInput(prompt, default='y', timeout=30, checkInterval=0.05):
 
         echo(CRLF)
         return default
+
+_sbatchKeyExpander = {
+    'A':'account', 'a':'array', 'b':'begin', 'D':'chdir', 'M':'clusters', 'C':'constraint',
+    'S':'core-spec', 'c':'cpus-per-task', 'd':'dependency', 'm':'distribution', 'e':'error',
+    'x':'exclude','B':'extra-node-info', 'G':'gpus', 'h':'help', 'H':'hold', 'i':'input',
+    'J':'job-name', 'L':'licenses', 'k':'no-kill', 'F':'nodefile', 'w':'nodelist', 'N':'nodes',
+    'n':'ntasks', 'o':'output', 'O':'overcommit', 's':'oversubscribe', 'p':'partition', 'q':'qos',
+    'Q':'quiet', 't':'time', 'v':'verbose', 'V':'version', 'W':'wait'
+    }
+
+def sbatchRequiresFullNode() -> bool:
+    """
+    Tests if the current compute node has a name corresponding with a cluster known to require full nodes when submitting jobs. For now, that's just trillium.
+    """
+    import os
+
+    nodeName = os.uname().nodename
+
+    outBool = False
+    outBool = outBool or ('tri' in nodeName)
+    # outBool = outBool or ('OTHER COMPUTER' in nodeName)
+
+    return outBool
+
+def sbatchTemplate(path:str, jobName:str, sbatchArgs:dict|None = None):
+    """
+    Fills part of a shell script to be submitted as a job with "sbatch /path/to/script.sh". Input arguments here determine the SBATCH arguments included in the file.
+
+    This function does NOT check that the set of SBATCH options are self-compatible. For example, one could overdefine the amount of resources requested. Check over your job before submitting!
+    """
+    import os
+
+    if sbatchArgs is None:
+        sbatchArgs = {}
+
+    USER=os.environ['USER']
+    allArgs = {'time':'01:00:00', 'account':'def-mlague', 'job-name':jobName, 'output':f'/scratch/{USER}/slurm/%j.out', 'error':f'/scratch/{USER}/slurm/%j.err'}
+
+    if sbatchRequiresFullNode():
+        allArgs.update({'nodes':'1', 'n-tasks-per-node':'192'})
+    else:
+        allArgs.update({'ntasks':'1','cpus-per-task':'8'})
+
+    keysToExpand = []
+    for key in sbatchArgs.keys():
+        if len(key) == 1:
+            keysToExpand.append(key)
+
+    for keyToExpand in keysToExpand:
+        val = sbatchArgs.pop(keyToExpand)
+        expandedKey = _sbatchKeyExpander[keyToExpand]
+        sbatchArgs[expandedKey] = val
+
+    allArgs.update(sbatchArgs)
+
+    os.makedirs(path, exist_ok=True) # Ensure parent directories exist. open() will create file as needed
+    with open(path, 'w', encoding='UTF-8') as f:
+        f.write('#!/bin/bash')
+        for flag, val in allArgs.items():
+            f.write(f'#SBATCH --{flag}={val}')
