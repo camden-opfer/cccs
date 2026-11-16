@@ -21,6 +21,9 @@ def createLogger(logFile:str|None = None, loggerName:str = __name__, propagatedL
     :type loggerName: str, optional
     :param propagatedLoggerNames: A sequence of additional loggers to propagate into this new one.
     :type propagatedLoggerNames: Sequence[str] or None, optional
+
+    :return: The created logger object, which can be used to, for example, run logger.log().
+    :rtype: logging.Logger
     """
     import logging
     import sys
@@ -153,6 +156,18 @@ def timedInput(prompt:str, default:str='y', timeout:int|float=30, checkInterval:
     checkInterval is used only for Windows machines, and is the precision with which this function checks for keyboard interupts, closing use of the 'enter' key, and for the function having timed out.
 
     Derived from the inputtimeout package (https://github.com/johejo/inputimeout/tree/master), but adds a default output rather than triggering an error if no input is provided.
+
+    :param prompt: The prompt given to the user, which asks for input.
+    :type prompt: str
+    :param default: The fallback value if no input is provided within the time limit. Default is 'y'.
+    :type default: str
+    :param timeout: Time (in seconds) for the user to provide input. Default is 30 seconds.
+    :type timeout: int or float
+    :param checkInterval: For Windows machines, how often to check for key presses in seconds. Default is 0.05 seconds.
+    :type checkInterval: int or float
+
+    :return: Either the user-provided input, or the default value depending on if timeout is reached.
+    :rtype: str
     """
     import sys
     import os
@@ -225,6 +240,9 @@ _sbatchKeyExpander = {
 def sbatchRequiresFullNode() -> bool:
     """
     Tests if the current compute node has a name corresponding with a cluster known to require full nodes when submitting jobs. For now, that's just trillium.
+
+    :return: Whether or not full nodes need to be submitted
+    :rtype: bool
     """
     import os
 
@@ -241,6 +259,13 @@ def sbatchTemplate(path:str, jobName:str, sbatchArgs:dict|None = None):
     Fills part of a shell script to be submitted as a job with "sbatch /path/to/script.sh". Input arguments here determine the SBATCH arguments included in the file.
 
     This function does NOT check that the set of SBATCH options are self-compatible. For example, one could overdefine the amount of resources requested. Check over your job before submitting!
+
+    :param path: The file to which the sbatch template will be written.
+    :type path: str
+    :param jobName: A distinct name which can be used to track the job once submitted.
+    :type jobName: str
+    :param sbatchArgs: Optional, any additional specifications for the job. For example, number of compute resources, allocation to use, or whether to email upon completion. Default is None, in which case minimal computing resources are requested for one hour.
+    :type sbatchArgs: dict or None, optional
     """
     import os
 
@@ -272,3 +297,49 @@ def sbatchTemplate(path:str, jobName:str, sbatchArgs:dict|None = None):
         f.write('#!/bin/bash')
         for flag, val in allArgs.items():
             f.write(f'#SBATCH --{flag}={val}')
+
+def listModuleDeps(module:str, loadTimeout:int|float = 10):
+    """
+    WARNING: This function assumes a system uses the "module" command to handle system modules, and will freak out if that is not the case (e.g. pretty much any personal work PC/laptop).
+
+    Determines the command that will load the provided module and all its dependencies. Returns this command and a list of dependencies (excluding the provided module).
+
+    :param module: The module to load. For example, 'NetCDF', 'nco', 'gcc', or 'StdEnv'.
+    :type module: str
+    :param loadTimeout: The timeout length (in seconds) allowed for the module load commands used within this function. Default is 10 seconds, which should be plenty.
+    :type loadTimeout: int or float
+
+    :return: A tuple with the first element being a command to load the provided module and all dependencies (like 'module load thing1 thing2 <module>'), and the second element being a list of dependencies (like ['thing1', 'thing2']).
+    :rtype: tuple[str, list[str]]
+    """
+    import subprocess
+    import sys
+
+    naiveOut = subprocess.run(f'module load {module}', shell=True, capture_output=True, check=False, timeout=loadTimeout)
+
+    # If the module needs dependencies to load, the expected value of naiveOut.stderr will be like:
+    # b'Lmod has detected the following error: These module(s) or extension(s) exist but cannot be loaded as requested: "nco"\n   Try: "module spider nco" to see how to load the module(s).\n   Or load any one of these options:\n      module load StdEnv/2023 gcc/12.3 nco/5.1.7\n      module load StdEnv/2023 intel/2023.2.1 nco/5.1.7\n      module load StdEnv/2026 gcc/15.3.0 nco/5.4.1\n\n\n'
+
+    if naiveOut.stderr:
+        loadCommand = naiveOut.stderr.decode(sys.stdout.encoding).split('module load')[-1]
+        loadCommand = loadCommand.strip()
+
+        # Test load command to ensure it works
+        try:
+            subprocess.run(loadCommand, shell=True, check=True, timeout=loadTimeout)
+        except (subprocess.CalledProcessError, TimeoutError) as e:
+            raise SystemError(f'Unexpected error when attempting to load {module} with the command {loadCommand}. Unable to determine dependencies.') from e
+
+        depList = loadCommand.split(' ') # For the above example, this gives ['StdEnv/2026', 'gcc/15.3.0', 'nco/5.4.1']
+
+        outDeps = []
+        for dep in depList:
+            if module not in dep:
+                outDeps += [dep]
+
+        loadCommand = 'module load ' + loadCommand
+
+        # For the above example, output will be ('module load StdEnv/2026 gcc/15.3.0 nco/5.4.1', ['gcc/15.3.0', 'nco/5.4.1'])
+        return loadCommand, outDeps
+
+    return f'module load {module}', []
