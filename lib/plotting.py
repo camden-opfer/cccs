@@ -304,12 +304,12 @@ def atmCrossSection(data:_ndarray, xdim:_ndarray, ydim:_ndarray, title:str, data
 
     elif cbarType == 'diverging':
         if vlims is not None:
-            warnings.warn('globalMap will ignore user-specified value for vmin and/or vmax because cbarType is diverging.', UserWarning)
+            vlims = np.nanpercentile(plotData, [0, 100])
 
         if cmap is None:
             cmap = 'seismic'
 
-        halfRange = np.nanmax(np.abs(np.nanpercentile(plotData, [0, 100])))
+        halfRange = np.nanmax(np.abs(vlims))
         norm = colors.CenteredNorm(halfrange=halfRange)
 
         dataMin, dataMax = -halfRange, halfRange
